@@ -240,7 +240,7 @@ class Grid(Mapping, GeoInterface):
                     )
                     neighbor_j = j + self._SHIFT_NEIGHBOR_J[position]
                     if 0 <= neighbor_i < self._width and 0 <= neighbor_j < self._height:
-                        queue.append(((neighbor_i, neighbor_j), neighbor.cell))
+                        queue.appendleft(((neighbor_i, neighbor_j), neighbor.cell))
         return self
 
     def expand_from_point(self, point: Point, resolution: int) -> "Grid":
