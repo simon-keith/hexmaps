@@ -1,0 +1,23 @@
+[tool.poetry]
+name = "hexmaps"
+version = "0.1.0"
+description = "Hex maps generation scripts"
+authors = ["Simon Keith <simon.keith@shippeo.com>"]
+
+[tool.poetry.dependencies]
+python = "^3.8"
+h3 = "^3.7.3"
+pyproj = "^3.3.0"
+folium = "^0.12.1"
+Shapely = "^1.8.1"
+
+[tool.poetry.dev-dependencies]
+pytest = "^7.1.0"
+flake8 = "^4.0.1"
+black = "^22.1.0"
+ipython = "^8.1.1"
+jupyterlab = "^3.3.1"
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
