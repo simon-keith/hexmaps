@@ -6,7 +6,7 @@ from itertools import count
 from typing import Any, Callable, Dict, Iterator, Optional, Tuple, Type, Union
 
 from h3.api import basic_int, memview_int
-from hexmaps.earth.geo import PYPROJ_GEOD, BaseFeature, GeoInterface, make_geojson_data
+from hexmaps.earth.geo import PYPROJ_GEOD, BaseFeature, GeoInterface, build_geojson_data
 from shapely.geometry import Point as ShapelyPoint
 from shapely.geometry import Polygon as ShapelyPolygon
 
@@ -249,4 +249,4 @@ class Grid(Mapping, GeoInterface):
 
     @property
     def __geo_interface__(self) -> Dict[str, Any]:
-        return make_geojson_data(self._cell_map.values())
+        return build_geojson_data(self._cell_map.values())

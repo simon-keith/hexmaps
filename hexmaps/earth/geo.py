@@ -34,7 +34,7 @@ class BaseFeature(GeoInterface):
         }
 
 
-def make_geojson_data(geo_iterable: Iterable[GeoInterface]):
+def build_geojson_data(geo_iterable: Iterable[GeoInterface]) -> Dict[str, Any]:
     return {
         "type": "FeatureCollection",
         "features": tuple(map(mapping, geo_iterable)),
