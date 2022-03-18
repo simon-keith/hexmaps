@@ -3,10 +3,10 @@ from collections import deque
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from itertools import count
-from typing import Any, Callable, Dict, Iterator, Optional, Tuple, Type, Union
+from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple, Type, Union
 
 from h3.api import basic_int, memview_int
-from hexmaps.earth.geo import PYPROJ_GEOD, BaseFeature, GeoInterface, build_geojson_data
+from hexmaps.earth.geo import PYPROJ_GEOD, BaseCollection, BaseFeature
 from shapely.geometry import Point as ShapelyPoint
 from shapely.geometry import Polygon as ShapelyPolygon
 
@@ -175,7 +175,7 @@ class GridCell(BaseFeature):
         }
 
 
-class Grid(Mapping, GeoInterface):
+class Grid(Mapping, BaseCollection):
     _SHIFT_NEIGHBOR_J = {0: 1, 1: 0, 2: -1, 3: -1, 4: 0, 5: 1}
     _SHIFT_NEIGHBOR_I_EVEN = {0: 0, 1: 1, 2: 0, 3: -1, 4: -1, 5: -1}
     _SHIFT_NEIGHBOR_I_ODD = {0: 1, 1: 1, 2: 1, 3: 0, 4: -1, 5: 0}
@@ -186,7 +186,7 @@ class Grid(Mapping, GeoInterface):
         self._height = height
         self._width = width
         self._bearing = bearing
-        self._cell_map = {}
+        self._cell_map: Dict[int, GridCell] = {}
 
     @property
     def height(self):
@@ -247,6 +247,5 @@ class Grid(Mapping, GeoInterface):
         cell = Cell.from_point(point, resolution)
         return self.expand_from_cell(cell)
 
-    @property
-    def __geo_interface__(self) -> Dict[str, Any]:
-        return build_geojson_data(self._cell_map.values())
+    def get_features(self) -> List[Dict[str, Any]]:
+        return list(f.__geo_interface__ for f in self._cell_map.values())

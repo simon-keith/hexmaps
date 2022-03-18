@@ -1,12 +1,10 @@
 from collections import Counter, OrderedDict
-from collections.abc import Mapping
-from copy import deepcopy
-from itertools import chain
-from typing import Any, Dict, Iterable, Optional, Tuple, Union
+from dataclasses import dataclass, field
+from itertools import chain, islice
+from typing import Any, Callable, Dict, Iterable, Optional, Tuple, Type, Union
 
 import folium
-from hexmaps.earth.geo import GeoInterface
-from shapely.geometry import mapping
+from hexmaps.earth.geo import GeoOrGeoSequence, get_feature_collection
 
 TILE_LAYER_COLLECTION = OrderedDict(
     (t.tile_name, t)
@@ -69,31 +67,6 @@ TILE_LAYER_COLLECTION = OrderedDict(
 )
 
 
-def _to_geojson(geo: Union[GeoInterface, Dict[str, Any]]) -> Dict[str, Any]:
-    if isinstance(geo, GeoInterface):
-        return mapping(geo)
-    elif isinstance(geo, Mapping) and all(isinstance(k, str) for k in geo.keys()):
-        return deepcopy(geo)
-    raise ValueError("invalid geo data type")
-
-
-def _build_tooltip(
-    geojson_data: Dict[str, Any],
-    most_common: int,
-    **kwargs,
-) -> Optional[folium.GeoJsonTooltip]:
-    if "features" not in geojson_data or len(geojson_data["features"]) == 0:
-        return
-    it = chain.from_iterable(f["properties"].keys() for f in geojson_data["features"])
-    fields = tuple(k for k, _ in Counter(it).most_common(most_common))
-    base_properties = OrderedDict([(k, None) for k in fields])
-    for f in geojson_data["features"]:
-        properties = base_properties.copy()
-        properties.update(f["properties"])
-        f["properties"] = properties
-    return folium.GeoJsonTooltip(fields=fields, **kwargs)
-
-
 def build_base_map(
     tiles: Iterable[folium.TileLayer] = TILE_LAYER_COLLECTION.values(),
     **kwargs,
@@ -104,26 +77,44 @@ def build_base_map(
     return m
 
 
-def _build_geojson_item(
-    name: str,
-    geo: Union[GeoInterface, Dict[str, Any]],
-    geojson_kwargs: Dict[str, Any],
-    tooltip_fields: int,
-    tooltip_kwargs: Dict[str, Any],
-) -> folium.GeoJson:
-    geojson_data = _to_geojson(geo)
-    tooltip = _build_tooltip(
-        geojson_data=geojson_data,
-        most_common=tooltip_fields,
-        **tooltip_kwargs,
-    )
-    geojson = folium.GeoJson(
-        name=name,
-        data=geojson_data,
-        tooltip=tooltip,
-        **geojson_kwargs,
-    )
-    return geojson
+def _get_geojson_property_counter(data: Dict[str, Any]) -> Counter:
+    try:
+        it = chain.from_iterable(f["properties"].keys() for f in data["features"])
+        return Counter(it)
+    except KeyError as e:
+        raise ValueError("invalid GeoJSON collection data") from e
+
+
+def _trim_properties(
+    data: Dict[str, Any],
+    field_names: Optional[Tuple[str]],
+    field_count: Optional[int],
+) -> Tuple[str, ...]:
+    fields = OrderedDict()
+    if field_names is not None:
+        fields.update([(f, None) for f in field_names])
+    if field_count is not None:
+        field_counter = _get_geojson_property_counter(data)
+        fields.update(
+            islice(
+                ((k, None) for k, _ in field_counter.most_common() if k not in fields),
+                max(field_count - len(fields), 0),
+            )
+        )
+    for f in data["features"]:
+        f["properties"] = OrderedDict([(k, f["properties"].get(k)) for k in fields])
+    return tuple(fields)
+
+
+def _build_geojson_details(
+    cls: Union[Type[folium.Tooltip], Type[folium.GeoJsonPopup]],
+    data: Dict[str, Any],
+    field_names: Tuple[str, ...],
+    **kwargs,
+) -> Optional[Union[folium.GeoJsonTooltip, folium.GeoJsonPopup]]:
+    if len(data["features"]) == 0:
+        return
+    return cls(fields=field_names, **kwargs)
 
 
 def _get_geojson_items_bounds(
@@ -145,26 +136,114 @@ def _get_geojson_items_bounds(
         return (lat_min, lon_min), (lat_max, lon_max)
 
 
-def build_geojson_map(
-    geo_mapping: Dict[str, Union[GeoInterface, Dict[str, Any]]],
-    *,
-    tiles: Iterable[folium.TileLayer] = TILE_LAYER_COLLECTION.values(),
-    map_kwargs: Dict[str, Any] = {},
-    geojson_kwargs: Dict[str, Any] = {},
-    tooltip_fields: int = 10,
-    tooltip_kwargs: Dict[str, Any] = {},
-) -> folium.Map:
-    geojson_list = [
-        _build_geojson_item(
-            name=name,
-            geo=geo,
-            geojson_kwargs=geojson_kwargs,
-            tooltip_fields=tooltip_fields,
-            tooltip_kwargs=tooltip_kwargs,
+@dataclass
+class DetailOptions:
+    field_names: Optional[Tuple[str]] = None
+    field_count: Optional[int] = 10
+    labels: Optional[bool] = None
+    localize: Optional[bool] = None
+    details_kwargs: Dict[str, Any] = field(default_factory=dict)
+    tooltip_kwargs: Dict[str, Any] = field(default_factory=dict)
+    popup_kwargs: Dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self):
+        if self.field_names is None and self.field_count is None:
+            raise ValueError("must set 'field_names' or 'field_count'")
+
+    def _get_details_kwargs(self) -> Dict[str, Any]:
+        kwargs = {}
+        if self.labels is not None:
+            kwargs["labels"] = self.labels
+        if self.localize is not None:
+            kwargs["localize"] = self.localize
+        return {**kwargs, **self.details_kwargs}
+
+    def get_tooltip_kwargs(self) -> Dict[str, Any]:
+        return {**self._get_details_kwargs(), **self.tooltip_kwargs}
+
+    def get_popup_kwargs(self) -> Dict[str, Any]:
+        return {**self._get_details_kwargs(), **self.popup_kwargs}
+
+
+@dataclass
+class GeoJsonOptions:
+    name: Optional[str] = None
+    show: Optional[bool] = None
+    zoom_on_click: Optional[bool] = None
+    style_function: Optional[Callable[[Dict[str, Any]], Dict[str, Any]]] = None
+    tooltip: bool = True
+    popup: bool = False
+    kwargs: Dict[str, Any] = field(default_factory=dict)
+
+    def get_kwargs(
+        self,
+    ) -> Dict[str, Any]:
+        kwargs = {}
+        if self.name is not None:
+            kwargs["name"] = self.name
+        if self.show is not None:
+            kwargs["show"] = self.show
+        if self.zoom_on_click is not None:
+            kwargs["zoom_on_click"] = self.zoom_on_click
+        if self.style_function is not None:
+            kwargs["style_function"] = self.style_function
+        return {**kwargs, **self.kwargs}
+
+
+@dataclass
+class GeoJsonArguments:
+    geo: GeoOrGeoSequence
+    geojson_options: GeoJsonOptions = field(default_factory=GeoJsonOptions)
+    detail_options: DetailOptions = field(default_factory=DetailOptions)
+
+
+def build_geojson_item(args: GeoJsonArguments) -> folium.GeoJson:
+    data = get_feature_collection(args.geo)
+    field_names = _trim_properties(
+        data=data,
+        field_names=args.detail_options.field_names,
+        field_count=args.detail_options.field_count,
+    )
+    tooltip_obj = (
+        _build_geojson_details(
+            cls=folium.GeoJsonTooltip,
+            data=data,
+            field_names=field_names,
+            **args.detail_options.get_tooltip_kwargs(),
         )
-        for name, geo in geo_mapping.items()
+        if args.geojson_options.tooltip
+        else None
+    )
+    popup_obj = (
+        _build_geojson_details(
+            cls=folium.GeoJsonPopup,
+            data=data,
+            field_names=field_names,
+            **args.detail_options.get_popup_kwargs(),
+        )
+        if args.geojson_options.popup
+        else None
+    )
+    geojson = folium.GeoJson(
+        data=data,
+        tooltip=tooltip_obj,
+        popup=popup_obj,
+        **args.geojson_options.get_kwargs(),
+    )
+    return geojson
+
+
+def build_geojson_map(
+    args: Tuple[Union[GeoJsonArguments, GeoOrGeoSequence]],
+    base_map: Optional[folium.Map] = None,
+) -> folium.Map:
+    base_map = base_map or build_base_map()
+    geojson_list = [
+        build_geojson_item(
+            a if isinstance(a, GeoJsonArguments) else GeoJsonArguments(geo=a)
+        )
+        for a in args
     ]
-    base_map = build_base_map(tiles=tiles, **map_kwargs)
     for geojson in geojson_list:
         base_map.add_child(geojson)
     bounds = _get_geojson_items_bounds(geojson_list)
