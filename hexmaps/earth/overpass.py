@@ -1,14 +1,15 @@
+import itertools
 import math
 import re
 from abc import abstractmethod
 from dataclasses import dataclass
 from datetime import timedelta
 from enum import Enum
-from itertools import chain
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import overpy
-from hexmaps.earth.geo import BaseFeature
+from hexmaps.earth.geo import PYPROJ_CRS, BaseFeature
+from hexmaps.utilities import nwise
 from shapely.geometry import (
     GeometryCollection,
     LineString,
@@ -53,13 +54,33 @@ def _get_way_points(
         ]
 
 
+def _get_ring_area(points: List[Point]) -> float:
+    if len(points) < 3:
+        return 0
+    radius = PYPROJ_CRS.ellipsoid.semi_major_metre
+    area = sum(
+        (math.radians(p3.x) - math.radians(p1.x)) * math.sin(math.radians(p2.y))
+        for p1, p2, p3 in nwise(points, n=3, cycle=True)
+    )
+    area *= radius**2 / 2
+    return area
+
+
+def _rewind_ring(points: List[Point], clockwise: bool) -> List[Point]:
+    is_clockwise = _get_ring_area(points) >= 0
+    if is_clockwise == clockwise:
+        return points
+    return points[::-1]
+
+
 def build_way_geometry(
     element: Union[overpy.Way, overpy.RelationWay],
     resolve_missing: bool = False,
+    clockwise: bool = False,
 ) -> Union[LineString, Polygon]:
     points = _get_way_points(element, resolve_missing)
     if points[0] == points[-1]:
-        return Polygon(points)
+        return Polygon(_rewind_ring(points, clockwise=clockwise))
     return LineString(points)
 
 
@@ -81,7 +102,9 @@ def build_relation_geometry(
         else:
             raise ValueError(f"unsupported relation type '{type(m).__name__}'")
     return GeometryCollection(
-        node_list + way_list + list(chain.from_iterable(r.geoms for r in relation_list))
+        node_list
+        + way_list
+        + list(itertools.chain.from_iterable(r.geoms for r in relation_list))
     )
 
 
