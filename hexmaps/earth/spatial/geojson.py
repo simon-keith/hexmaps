@@ -2,12 +2,8 @@ from abc import ABC, abstractmethod
 from collections.abc import Sequence as ABCSequence
 from typing import Any, Dict, List, Sequence, Union
 
-import pyproj
 from shapely.geometry import mapping
 from shapely.geometry.base import BaseGeometry
-
-PYPROJ_CRS = pyproj.CRS("OGC:CRS84")
-PYPROJ_GEOD = PYPROJ_CRS.get_geod()
 
 
 class GeoInterface(ABC):

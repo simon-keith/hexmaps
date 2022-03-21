@@ -6,7 +6,9 @@ from itertools import count
 from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple, Type, Union
 
 from h3.api import basic_int, memview_int
-from hexmaps.earth.geo import PYPROJ_GEOD, BaseCollection, BaseFeature
+from hexmaps.earth.spatial.geojson import BaseCollection, BaseFeature
+from hexmaps.earth.spatial.geometry import validate_wgs84_coordinates
+from hexmaps.earth.spatial.proj import WGS84_GEOD
 from shapely.geometry import Point as ShapelyPoint
 from shapely.geometry import Polygon as ShapelyPolygon
 
@@ -19,8 +21,7 @@ class Point(BaseFeature):
     latitude: float
 
     def __post_init__(self):
-        assert -90 <= self.latitude <= 90, "invalid latitude"
-        assert -180 <= self.longitude <= 180, "invalid longitude"
+        validate_wgs84_coordinates(self.longitude, self.latitude)
 
     def get_index(self, resolution: int) -> H3IndexType:
         return memview_int.geo_to_h3(self.latitude, self.longitude, resolution)
@@ -58,7 +59,7 @@ class Cell(BaseFeature):
         return memview_int.h3_is_pentagon(self.index)
 
     def get_bearing(self, other: "Cell") -> float:
-        fwd, _, _ = PYPROJ_GEOD.inv(
+        fwd, _, _ = WGS84_GEOD.inv(
             self.point.longitude,
             self.point.latitude,
             other.point.longitude,
@@ -67,7 +68,7 @@ class Cell(BaseFeature):
         return fwd
 
     def get_distance(self, other: "Cell") -> float:
-        _, _, dist = PYPROJ_GEOD.inv(
+        _, _, dist = WGS84_GEOD.inv(
             self.point.longitude,
             self.point.latitude,
             other.point.longitude,

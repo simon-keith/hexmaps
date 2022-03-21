@@ -4,7 +4,7 @@ from itertools import chain, islice
 from typing import Any, Callable, Dict, Iterable, Optional, Tuple, Type, Union
 
 import folium
-from hexmaps.earth.geo import GeoOrGeoSequence, get_feature_collection
+from hexmaps.earth.spatial.geojson import GeoOrGeoSequence, get_feature_collection
 
 TILE_LAYER_COLLECTION = OrderedDict(
     (t.tile_name, t)
