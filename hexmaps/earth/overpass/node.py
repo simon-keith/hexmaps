@@ -49,7 +49,7 @@ class NodeFeature(OverpassFeature):
     def from_element(
         cls,
         element: overpy.Element,
-        resolve_missing: bool = True,
+        resolve_missing: bool = False,
     ) -> "NodeFeature":
         geometry = build_node_geometry(element=element, resolve_missing=resolve_missing)
         return cls(element=element, geometry=geometry)

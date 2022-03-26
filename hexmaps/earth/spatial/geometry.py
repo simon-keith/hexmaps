@@ -33,7 +33,7 @@ def polygonize(
     allow_dangles: bool = False,
     allow_invalids: bool = False,
 ) -> Tuple[List[Polygon], List[LineString]]:
-    # TODO: try to fix dangles and invalids
+    # TODO: add option to try to fix dangles and invalids (e.g. with unary_union)
     polygons, dangles, cuts, invalids = polygonize_full(lines)
     polygon_list = list(extract_geometry_type(polygons, Polygon))
     line_list = list(extract_geometry_type(cuts, LineString))

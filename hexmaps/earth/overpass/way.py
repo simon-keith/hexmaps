@@ -3,7 +3,7 @@ from typing import Tuple, Union, get_args
 import overpy
 from hexmaps.earth.overpass import node
 from hexmaps.earth.overpass.base import OverpassFeature
-from hexmaps.earth.spatial.geometry import polygonize as _polygonize
+from hexmaps.earth.spatial.geometry import polygonize as polygonize
 from hexmaps.earth.spatial.geometry import validate_wgs84_coordinates
 from shapely.geometry import LineString, Polygon
 from shapely.geometry.polygon import orient
@@ -40,7 +40,8 @@ def get_way_coordinates(
 def build_way_geometry(
     element: Union[overpy.Way, overpy.RelationWay],
     resolve_missing: bool = False,
-    polygonize: bool = True,
+    allow_dangles: bool = True,
+    allow_invalids: bool = True,
 ) -> WayGeometryType:
     line = LineString(
         get_way_coordinates(
@@ -48,9 +49,11 @@ def build_way_geometry(
             resolve_missing=resolve_missing,
         )
     )
-    if not polygonize:
-        return line
-    polygon_tuple, line_tuple = _polygonize(line)
+    polygon_tuple, line_tuple = polygonize(
+        lines=[line],
+        allow_dangles=allow_dangles,
+        allow_invalids=allow_invalids,
+    )
     polygon_len, line_len = len(polygon_tuple), len(line_tuple)
     if polygon_len == 1 and line_len == 0:
         return orient(polygon_tuple[0])
@@ -76,12 +79,14 @@ class WayFeature(OverpassFeature):
     def from_element(
         cls,
         element: overpy.Element,
-        resolve_missing: bool = True,
-        polygonize: bool = True,
+        resolve_missing: bool = False,
+        allow_dangles: bool = True,
+        allow_invalids: bool = True,
     ) -> "WayFeature":
         geometry = build_way_geometry(
             element=element,
             resolve_missing=resolve_missing,
-            polygonize=polygonize,
+            allow_dangles=allow_dangles,
+            allow_invalids=allow_invalids,
         )
         return cls(element=element, geometry=geometry)

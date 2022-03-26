@@ -219,6 +219,9 @@ def get_features(
     elements: Tuple[List[overpy.Node], List[overpy.Way], List[overpy.Relation]],
     resolve_missing: bool = False,
     split_relations: bool = False,
+    repolygonize: bool = True,
+    allow_dangles: bool = True,
+    allow_invalids: bool = True,
 ) -> Tuple[List[NodeFeature], List[WayFeature], List[RelationFeature]]:
     nodes, ways, relations = elements
     node_features = [
@@ -232,6 +235,8 @@ def get_features(
         WayFeature.from_element(
             element=w,
             resolve_missing=resolve_missing,
+            allow_dangles=allow_dangles,
+            allow_invalids=allow_invalids,
         )
         for w in ways
     ]
@@ -241,13 +246,22 @@ def get_features(
                 RelationFeature.split_element(
                     element=r,
                     resolve_missing=resolve_missing,
+                    repolygonize=repolygonize,
+                    allow_dangles=allow_dangles,
+                    allow_invalids=allow_invalids,
                 )
                 for r in relations
             )
         )
     else:
         relation_features = [
-            RelationFeature.from_element(element=r, resolve_missing=resolve_missing)
+            RelationFeature.from_element(
+                element=r,
+                resolve_missing=resolve_missing,
+                repolygonize=repolygonize,
+                allow_dangles=allow_dangles,
+                allow_invalids=allow_invalids,
+            )
             for r in relations
         ]
     return node_features, way_features, relation_features

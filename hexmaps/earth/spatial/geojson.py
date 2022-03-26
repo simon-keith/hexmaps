@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from collections.abc import Sequence as ABCSequence
-from typing import Any, Dict, List, Sequence, Union
+from typing import Any, Dict, List, Optional, Sequence, Union
 
 from shapely.geometry import mapping
 from shapely.geometry.base import BaseGeometry
@@ -42,6 +42,22 @@ class BaseCollection(GeoInterface):
             "type": "FeatureCollection",
             "features": self.get_features(),
         }
+
+
+class GeometryFeature(BaseFeature):
+    def __init__(
+        self,
+        geometry: BaseGeometry,
+        properties: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        self._geometry = geometry
+        self._properties = properties or {}
+
+    def get_geometry(self) -> BaseGeometry:
+        return self._geometry
+
+    def get_properties(self) -> Dict[str, Any]:
+        return self._properties
 
 
 def validate_feature_data(data: Dict[str, Any]) -> Dict[str, Any]:

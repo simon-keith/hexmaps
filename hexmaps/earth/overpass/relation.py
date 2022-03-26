@@ -1,4 +1,5 @@
-from typing import List, Sequence, Tuple, Union, get_args
+from collections import OrderedDict, deque
+from typing import Dict, List, Tuple, Union, get_args
 
 import overpy
 from hexmaps.earth.overpass import node, way
@@ -16,7 +17,9 @@ from shapely.geometry import (
 from shapely.geometry.polygon import orient
 
 RelationCoordinatesType = Tuple[
-    Tuple[node.NodeCoordinatesType, ...], Tuple[way.WayCoordinatesType, ...]
+    Tuple[node.NodeCoordinatesType, ...],
+    Tuple[way.WayCoordinatesType, ...],
+    Tuple["RelationCoordinatesType", ...],
 ]
 RelationGeometryType = Union[
     GeometryCollection,
@@ -29,125 +32,158 @@ RelationGeometryType = Union[
 ]
 
 
-def _recurse_relation(
-    element: Union[overpy.Relation, overpy.RelationRelation],
-    resolve_missing: bool,
-    node_member_list: List[overpy.RelationNode],
-    way_member_list: List[overpy.RelationWay],
-):
-    # TODO: keep nested relations grouped
-    if isinstance(element, overpy.RelationRelation):
-        element = element.resolve(resolve_missing=resolve_missing)
-    for m in element.members:
-        if isinstance(m, overpy.RelationNode):
-            node_member_list.append(m)
-        elif isinstance(m, overpy.RelationWay):
-            way_member_list.append(m)
-        elif isinstance(m, overpy.RelationRelation):
-            _recurse_relation(
-                element=m,
-                resolve_missing=resolve_missing,
-                node_member_list=node_member_list,
-                way_member_list=way_member_list,
+class RecursedRelation:
+    def __init__(
+        self,
+        element: Union[overpy.Relation, overpy.RelationRelation],
+        resolve_missing: bool = False,
+    ) -> None:
+        if isinstance(element, overpy.RelationRelation):
+            element = element.resolve(resolve_missing=resolve_missing)
+        node_list, way_list, relation_list = [], [], []
+        for m in element.members:
+            if isinstance(m, overpy.RelationNode):
+                node_list.append(m)
+            elif isinstance(m, overpy.RelationWay):
+                way_list.append(m)
+            elif isinstance(m, overpy.RelationRelation):
+                relation_list.append(
+                    type(self)(element=m, resolve_missing=resolve_missing)
+                )
+            else:
+                raise ValueError(f"unsupported relation type '{type(m).__name__}'")
+        self._resolve_missing = resolve_missing
+        self.nodes: Tuple[overpy.RelationNode] = tuple(node_list)
+        self.ways: Tuple[overpy.RelationWay] = tuple(way_list)
+        self.relations: Tuple["RecursedRelation"] = tuple(relation_list)
+
+    def get_coordinates(self) -> RelationCoordinatesType:
+        nodes = tuple(
+            node.get_node_coordinates(element=n, resolve_missing=self._resolve_missing)
+            for n in self.nodes
+        )
+        ways = tuple(
+            way.get_way_coordinates(element=w, resolve_missing=self._resolve_missing)
+            for w in self.ways
+        )
+        relations = tuple(
+            r.get_coordinates(resolve_missing=self._resolve_missing)
+            for r in self.relations
+        )
+        return nodes, ways, relations
+
+    def _recurse_geometries(
+        self,
+        allow_dangles: bool,
+        allow_invalids: bool,
+    ) -> Tuple[List[Point], List[LineString], List[Polygon]]:
+        point_list, line_list, polygon_list = [], [], []
+        # get children geometries
+        for rel in self.relations:
+            pt, ln, pg = rel._recurse_geometries(
+                allow_dangles=allow_dangles,
+                allow_invalids=allow_invalids,
             )
-        else:
-            raise ValueError(f"unsupported relation type '{type(m).__name__}'")
+            point_list.extend(pt)
+            line_list.extend(ln)
+            polygon_list.extend(pg)
+        # build own geometries
+        point_list.extend(
+            node.build_node_geometry(element=n, resolve_missing=self._resolve_missing)
+            for n in self.nodes
+        )
+        pg, ln = polygonize(
+            lines=(
+                way.build_way_geometry(element=w, resolve_missing=self._resolve_missing)
+                for w in self.ways
+            ),
+            allow_dangles=allow_dangles,
+            allow_invalids=allow_invalids,
+        )
+        line_list.extend(ln)
+        polygon_list.extend(pg)
+        # return final lists
+        return point_list, line_list, polygon_list
 
+    def get_geometry(
+        self,
+        repolygonize: bool = True,
+        allow_dangles: bool = True,
+        allow_invalids: bool = True,
+    ) -> RelationGeometryType:
+        point_list, line_list, polygon_list = self._recurse_geometries(
+            allow_dangles=allow_dangles,
+            allow_invalids=allow_invalids,
+        )
+        if repolygonize:
+            new_polygon_list, line_list = polygonize(
+                lines=line_list,
+                allow_dangles=allow_dangles,
+                allow_invalids=allow_invalids,
+            )
+            polygon_list.extend(new_polygon_list)
+        return GeometryCollection(
+            point_list + line_list + [orient(p) for p in polygon_list]
+        )
+        # geoms = (
+        #     MultiPoint(point_list),
+        #     MultiLineString(line_list),
+        #     MultiPolygon(orient(p) for p in polygon_list),
+        # )
+        # geoms = tuple(
+        #     g if len(g.geoms) > 1 else g.geoms[0] for g in geoms if len(g.geoms) > 0
+        # )
+        # if len(geoms) == 1:
+        #     return geoms[0]
+        # return GeometryCollection(geoms)
 
-def _get_node_and_way_members(
-    element: Union[overpy.Relation, overpy.RelationRelation],
-    resolve_missing: bool,
-) -> Tuple[List[overpy.RelationNode], List[overpy.RelationWay]]:
-    node_member_list, way_member_list = [], []
-    _recurse_relation(
-        element=element,
-        resolve_missing=resolve_missing,
-        node_member_list=node_member_list,
-        way_member_list=way_member_list,
-    )
-    return node_member_list, way_member_list
+    def to_dict_tree(
+        self,
+        reverse: bool = False,
+    ) -> Dict[int, Tuple["RecursedRelation", Tuple[int, ...]]]:
+        current_index = 0
+        queue = deque([(current_index, self)])
+        tree = OrderedDict()
+        while len(queue) > 0:
+            rel_index, rel = queue.pop()
+            rel_children_indexes = []
+            for child in rel.relations:
+                current_index += 1
+                rel_children_indexes.append(current_index)
+                queue.appendleft((current_index, child))
+            tree[rel_index] = rel, tuple(rel_children_indexes)
+        if reverse:
+            tree = OrderedDict(sorted(tree.items(), reverse=reverse))
+        return tree
 
 
 def get_relation_coordinates(
-    element: Union[overpy.Way, overpy.RelationWay],
+    element: Union[overpy.Relation, overpy.RelationRelation],
     resolve_missing: bool = False,
 ) -> RelationCoordinatesType:
-    node_member_list, way_member_list = _get_node_and_way_members(
+    recursed_relation = RecursedRelation(
         element=element,
         resolve_missing=resolve_missing,
     )
-    node_coordinates_tuple = tuple(
-        node.get_node_coordinates(
-            element=n,
-            resolve_missing=resolve_missing,
-        )
-        for n in node_member_list
-    )
-    way_coordinates_tuple = tuple(
-        way.get_way_coordinates(
-            element=w,
-            resolve_missing=resolve_missing,
-        )
-        for w in way_member_list
-    )
-    return node_coordinates_tuple, way_coordinates_tuple
-
-
-def _merge_polygons(polygons: Sequence[Polygon]) -> MultiPolygon:
-    # TODO: identify exteriors and interiors and merge
-    return MultiPolygon(orient(p) for p in polygons)
-
-
-def _build_relation_geometries(
-    element: Union[overpy.Relation, overpy.RelationRelation],
-    resolve_missing: bool,
-) -> Tuple[MultiPolygon, MultiLineString, MultiPoint]:
-    # get nodes and ways
-    node_member_list, way_member_list = _get_node_and_way_members(
-        element=element,
-        resolve_missing=resolve_missing,
-    )
-    # generate point, line and polygon geometries
-    point_list = [
-        node.build_node_geometry(element=n, resolve_missing=resolve_missing)
-        for n in node_member_list
-    ]
-    polygon_list, line_list = polygonize(
-        # TODO: fix dangles and invalids rather than allowing them
-        lines=(
-            way.build_way_geometry(
-                element=w,
-                resolve_missing=resolve_missing,
-                polygonize=False,
-            )
-            for w in way_member_list
-        ),
-        allow_dangles=True,
-        allow_invalids=True,
-    )
-    # create collections
-    multi_point = MultiPoint(point_list)
-    multi_line = MultiLineString(line_list)
-    multi_polygon = _merge_polygons(polygon_list)
-    # return collections
-    return (multi_polygon, multi_line, multi_point)
+    return recursed_relation.get_coordinates()
 
 
 def build_relation_geometry(
     element: Union[overpy.Relation, overpy.RelationRelation],
     resolve_missing: bool = False,
+    repolygonize: bool = True,
+    allow_dangles: bool = True,
+    allow_invalids: bool = True,
 ) -> RelationGeometryType:
-    geometry_list = [
-        g.geoms[0] if len(g.geoms) == 1 else g
-        for g in _build_relation_geometries(
-            element=element,
-            resolve_missing=resolve_missing,
-        )
-        if len(g.geoms) > 0
-    ]
-    if len(geometry_list) == 1:
-        return geometry_list[0]
-    return GeometryCollection(geometry_list)
+    recursed_relation = RecursedRelation(
+        element=element,
+        resolve_missing=resolve_missing,
+    )
+    return recursed_relation.get_geometry(
+        repolygonize=repolygonize,
+        allow_dangles=allow_dangles,
+        allow_invalids=allow_invalids,
+    )
 
 
 class RelationFeature(OverpassFeature):
@@ -167,11 +203,17 @@ class RelationFeature(OverpassFeature):
     def from_element(
         cls,
         element: overpy.Element,
-        resolve_missing: bool = True,
+        resolve_missing: bool = False,
+        repolygonize: bool = True,
+        allow_dangles: bool = True,
+        allow_invalids: bool = True,
     ) -> "RelationFeature":
         geometry = build_relation_geometry(
             element=element,
             resolve_missing=resolve_missing,
+            repolygonize=repolygonize,
+            allow_dangles=allow_dangles,
+            allow_invalids=allow_invalids,
         )
         return cls(element=element, geometry=geometry)
 
@@ -179,11 +221,17 @@ class RelationFeature(OverpassFeature):
     def split_element(
         cls,
         element: overpy.Element,
-        resolve_missing: bool = True,
+        resolve_missing: bool = False,
+        repolygonize: bool = True,
+        allow_dangles: bool = True,
+        allow_invalids: bool = True,
     ) -> Tuple["RelationFeature", ...]:
         geometry = build_relation_geometry(
             element=element,
             resolve_missing=resolve_missing,
+            repolygonize=repolygonize,
+            allow_dangles=allow_dangles,
+            allow_invalids=allow_invalids,
         )
         if not isinstance(geometry, GeometryCollection):
             return (cls(element=element, geometry=geometry),)

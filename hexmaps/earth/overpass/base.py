@@ -68,7 +68,7 @@ class OverpassFeature(BaseFeature):
     def from_element(
         cls,
         element: overpy.Element,
-        resolve_missing: bool = True,
+        resolve_missing: bool = False,
         **kwargs,
     ) -> "OverpassFeature":
         pass
